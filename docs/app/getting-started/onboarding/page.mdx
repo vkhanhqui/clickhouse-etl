@@ -1,0 +1,187 @@
+---
+title: 'New Contributor Onboarding'
+description: 'A guided tour of the GlassFlow codebase for new contributors'
+---
+
+import { Callout } from 'nextra/components'
+
+# New Contributor Onboarding
+
+Welcome to GlassFlow! This page gives you a mental model of the project, a map of the codebase, and a suggested reading order to get productive quickly.
+
+## What GlassFlow Does
+
+GlassFlow is a stream processing ETL engine that moves data from sources (Kafka, OTLP) into ClickHouse. Along the way it can:
+
+- **Deduplicate** events using a time-windowed key store (BadgerDB)
+- **Join** two streams temporally (left/right key-value matching with TTL)
+- **Filter** events with expression-based rules before they reach ClickHouse
+- **Transform** event payloads using the `expr` expression engine
+- **Route failures** to a Dead-Letter Queue so no data is silently lost
+
+Everything runs as a single Go binary (`glassflow-api`). The `-role` flag selects which mode to activate at startup: `ingestor`, `sink`, `join`, or `dedup`.
+
+---
+
+## Mind Map
+
+```
+GlassFlow (clickhouse-etl)
+│
+├── Sources
+│   ├── Kafka (franz-go consumer)
+│   └── OTLP (gRPC :4317 / HTTP :4318)
+│
+├── glassflow-api/               ← single Go binary, role-selected at runtime
+│   ├── cmd/                     ← main.go — entry point, flag parsing
+│   └── internal/
+│       ├── api/                 ← REST API (Huma v2) — pipeline CRUD
+│       ├── ingestor/            ← Kafka consumer → NATS publisher
+│       ├── stream/              ← NATS JetStream subscriber abstraction
+│       ├── deduplication/       ← BadgerDB key store, time-window dedup
+│       ├── filter/              ← expr-based event filtering
+│       ├── transformer/         ← stateless field transforms (expr engine)
+│       ├── join/                ← temporal left/right stream join (KV + TTL)
+│       ├── sink/                ← ClickHouse batch writer (clickhouse-go v2)
+│       ├── dlq/                 ← Dead-Letter Queue publisher
+│       ├── orchestrator/        ← Kubernetes CRD + local orchestration
+│       ├── service/             ← business logic (pipeline lifecycle)
+│       ├── storage/             ← PostgreSQL persistence (pgx v5)
+│       ├── models/              ← shared config structs
+│       ├── schema_v2/           ← JSON → ClickHouse schema mapping
+│       ├── kafka/               ← low-level franz-go consumer wrapper
+│       ├── batch/               ← batching helpers for sink writes
+│       ├── componentsignals/    ← cross-component health signalling
+│       └── otlp-receiver/       ← OTLP → NATS bridge
+│
+├── Data Flow (runtime)
+│   Source
+│     └─► Ingestor ──► NATS JetStream ──► [Filter]
+│                                              └─► [Dedup]
+│                                                    └─► [Transform]
+│                                                          └─► [Join]
+│                                                                └─► Sink ──► ClickHouse
+│                                                                       └─► DLQ (on failure)
+│
+├── Infrastructure
+│   ├── NATS JetStream           ← internal message bus between stages
+│   ├── PostgreSQL               ← pipeline config persistence
+│   ├── BadgerDB                 ← embedded dedup state store (per pod)
+│   └── Kubernetes               ← operator + CRDs manage per-pipeline pods
+│
+├── ui/                          ← Next.js frontend (pipeline UI)
+├── nats-kafka-bridge/           ← optional NATS ↔ Kafka bridge
+├── docs/                        ← Nextra docs site (you are here)
+└── demos/                       ← runnable local demos (CLI + Helm)
+```
+
+---
+
+## Suggested Reading Order
+
+Follow this path to build understanding layer by layer.
+
+### Step 1 — Understand the pipeline lifecycle
+
+Read these two docs pages first (10 min):
+
+- [Architecture Overview](/architecture) — component diagram
+- [Data Flow](/architecture/data-flow) — acknowledgment guarantees at each stage
+
+### Step 2 — Trace the code for a single event
+
+Follow a Kafka message from source to ClickHouse:
+
+1. `glassflow-api/cmd/main.go` — see how `-role` dispatches to each component
+2. `internal/ingestor/` — Kafka consumer polls, publishes to NATS
+3. `internal/stream/` — NATS subscriber abstraction used by every downstream stage
+4. `internal/sink/` — reads from NATS, batches, writes to ClickHouse
+
+This end-to-end path uses every core abstraction without the optional complexity of dedup/join.
+
+### Step 3 — Explore optional transformation stages
+
+Once the core path is clear:
+
+| Package | What it does |
+|---------|-------------|
+| `internal/filter/` | Evaluates `expr` expressions; drops non-matching events |
+| `internal/deduplication/` | BadgerDB-backed key store; skips seen events within a time window |
+| `internal/transformer/` | Applies field-level expression transforms before schema mapping |
+| `internal/join/` | Temporal left/right join with KV stores and TTL eviction |
+
+### Step 4 — Understand pipeline configuration
+
+- `internal/models/` — all config structs (start here to understand what each field does)
+- `internal/storage/` — how pipelines are persisted in PostgreSQL
+- `internal/api/` — REST endpoints that create/update/delete pipelines
+
+### Step 5 — Run something locally
+
+```bash
+# Start a local Kind cluster with all services
+glassflow up
+
+# Or load demo data
+glassflow up --demo
+```
+
+Then create a pipeline using a test payload:
+
+```bash
+curl -v http://localhost:8081/api/v1/pipeline \
+  -X POST -H 'Content-Type: application/json' \
+  --data @glassflow-api/bin/<payload>.json
+```
+
+<Callout type="info">
+  Test payloads live in `glassflow-api/bin/*.json`. Pick the one closest to the feature you are working on.
+</Callout>
+
+---
+
+## Key Technology Choices
+
+| Purpose | Library | Why |
+|---------|---------|-----|
+| REST API | [Huma v2](https://huma.rocks) | OpenAPI-first, schema validation built in |
+| Kafka consumer | [franz-go](https://github.com/twmb/franz-go) | Pure Go, explicit offset control |
+| ClickHouse writer | [clickhouse-go v2](https://github.com/ClickHouse/clickhouse-go) | Native protocol, bulk insert support |
+| Messaging | [NATS JetStream](https://docs.nats.io/nats-concepts/jetstream) | Persistent, at-least-once delivery with explicit ack |
+| Expression engine | [expr](https://github.com/expr-lang/expr) | Safe, sandboxed expression evaluation |
+| Dedup state | [BadgerDB v4](https://github.com/dgraph-io/badger) | Embedded LSM store, no external dependency |
+| Pipeline config | PostgreSQL + [pgx v5](https://github.com/jackc/pgx) | Reliable config persistence |
+| Observability | OpenTelemetry + slog/tint | Structured logs + OTEL metrics/traces |
+
+---
+
+## Common Commands
+
+```bash
+# Unit tests (from glassflow-api/)
+make run-test
+
+# Short tests only
+make run-short-test
+
+# End-to-end tests
+make run-e2e-test
+
+# Lint
+make lint
+
+# Full pre-push check (run before opening a PR)
+make pre-push-check
+
+# Single test
+go test ./internal/... -run TestFunctionName -race
+```
+
+---
+
+## Where to Get Help
+
+- **Architecture questions** — read `docs/app/architecture/`
+- **Domain terminology** — `../glassflow-agent-context/domain/glossary.md`
+- **Slack** — [GlassFlow Hub](https://join.slack.com/t/glassflowhub/shared_invite/zt-349m7lenp-IFeKSGfQwpJfIiQ7oyFFKg)
+- **GitHub Issues** — [github.com/glassflow/clickhouse-etl/issues](https://github.com/glassflow/clickhouse-etl/issues)
