@@ -1,132 +1,178 @@
 ---
 title: 'New Contributor Onboarding'
-description: 'A guided tour of the GlassFlow codebase for new contributors'
+description: 'A guided tour of the GlassFlow codebase for new contributors — from zero to first pull request'
 ---
 
-import { Callout } from 'nextra/components'
+import { Callout, Steps, Tabs } from 'nextra/components'
 
 # New Contributor Onboarding
 
-Welcome to GlassFlow! This page gives you a mental model of the project, a map of the codebase, and a suggested reading order to get productive quickly.
-
-## What GlassFlow Does
-
-GlassFlow is a stream processing ETL engine that moves data from sources (Kafka, OTLP) into ClickHouse. Along the way it can:
-
-- **Deduplicate** events using a time-windowed key store (BadgerDB)
-- **Join** two streams temporally (left/right key-value matching with TTL)
-- **Filter** events with expression-based rules before they reach ClickHouse
-- **Transform** event payloads using the `expr` expression engine
-- **Route failures** to a Dead-Letter Queue so no data is silently lost
-
-Everything runs as a single Go binary (`glassflow-api`). The `-role` flag selects which mode to activate at startup: `ingestor`, `sink`, `join`, or `dedup`.
+Welcome to GlassFlow! This page takes you from zero context to writing your first code — step by step, no prior knowledge of the codebase assumed.
 
 ---
 
-## Mind Map
+## What Is GlassFlow? (Plain English)
+
+Imagine you have a firehose of events coming from Kafka — millions of login events, orders, sensor readings — and you want them all searchable in ClickHouse, a fast analytics database. The problem is:
+
+- Events may arrive **duplicated** (the same order sent twice)
+- You may want to **combine** events from two streams (e.g., match a login event to a user profile)
+- Some events are **garbage** (null timestamps, malformed fields) and should be dropped
+- You need **zero data loss** even if a component crashes mid-way
+
+GlassFlow solves all of this. It is a stream processing engine that sits between your data sources and ClickHouse:
 
 ```
-GlassFlow (clickhouse-etl)
-│
-├── Sources
-│   ├── Kafka (franz-go consumer)
-│   └── OTLP (gRPC :4317 / HTTP :4318)
-│
-├── glassflow-api/               ← single Go binary, role-selected at runtime
-│   ├── cmd/                     ← main.go — entry point, flag parsing
-│   └── internal/
-│       ├── api/                 ← REST API (Huma v2) — pipeline CRUD
-│       ├── ingestor/            ← Kafka consumer → NATS publisher
-│       ├── stream/              ← NATS JetStream subscriber abstraction
-│       ├── deduplication/       ← BadgerDB key store, time-window dedup
-│       ├── filter/              ← expr-based event filtering
-│       ├── transformer/         ← stateless field transforms (expr engine)
-│       ├── join/                ← temporal left/right stream join (KV + TTL)
-│       ├── sink/                ← ClickHouse batch writer (clickhouse-go v2)
-│       ├── dlq/                 ← Dead-Letter Queue publisher
-│       ├── orchestrator/        ← Kubernetes CRD + local orchestration
-│       ├── service/             ← business logic (pipeline lifecycle)
-│       ├── storage/             ← PostgreSQL persistence (pgx v5)
-│       ├── models/              ← shared config structs
-│       ├── schema_v2/           ← JSON → ClickHouse schema mapping
-│       ├── kafka/               ← low-level franz-go consumer wrapper
-│       ├── batch/               ← batching helpers for sink writes
-│       ├── componentsignals/    ← cross-component health signalling
-│       └── otlp-receiver/       ← OTLP → NATS bridge
-│
-├── Data Flow (runtime)
-│   Source
-│     └─► Ingestor ──► NATS JetStream ──► [Filter]
-│                                              └─► [Dedup]
-│                                                    └─► [Transform]
-│                                                          └─► [Join]
-│                                                                └─► Sink ──► ClickHouse
-│                                                                       └─► DLQ (on failure)
-│
-├── Infrastructure
-│   ├── NATS JetStream           ← internal message bus between stages
-│   ├── PostgreSQL               ← pipeline config persistence
-│   ├── BadgerDB                 ← embedded dedup state store (per pod)
-│   └── Kubernetes               ← operator + CRDs manage per-pipeline pods
-│
-├── ui/                          ← Next.js frontend (pipeline UI)
-├── nats-kafka-bridge/           ← optional NATS ↔ Kafka bridge
-├── docs/                        ← Nextra docs site (you are here)
-└── demos/                       ← runnable local demos (CLI + Helm)
+Your Data Sources
+  (Kafka, OTLP)
+        │
+        ▼
+  ┌─────────────┐
+  │  Ingestor   │  Reads from Kafka, publishes to NATS
+  └──────┬──────┘
+         │  NATS JetStream (internal message bus)
+         ▼
+  ┌─────────────┐
+  │   Filter    │  Drops events that don't match a rule
+  └──────┬──────┘
+         ▼
+  ┌─────────────┐
+  │    Dedup    │  Skips events it has seen before
+  └──────┬──────┘
+         ▼
+  ┌─────────────┐
+  │  Transform  │  Reshapes fields (e.g., uppercase a name)
+  └──────┬──────┘
+         ▼
+  ┌─────────────┐
+  │    Join     │  Matches events from two streams by key
+  └──────┬──────┘
+         ▼
+  ┌─────────────┐
+  │    Sink     │  Batch-writes to ClickHouse
+  └─────────────┘
+         │
+         ▼
+    ClickHouse
 ```
+
+Each box is a separate Kubernetes pod, but they all run the **same Go binary** — just with a different `-role` flag.
+
+If anything goes wrong, the bad event goes to the **Dead-Letter Queue (DLQ)** so it can be inspected and reprocessed later. Nothing is silently lost.
+
+---
+
+## Codebase Mind Map
+
+```
+clickhouse-etl/                          ← repo root
+│
+├── glassflow-api/                       ← the main Go binary
+│   ├── cmd/main.go                      ← entry point: reads -role flag, starts the right component
+│   └── internal/
+│       ├── api/                         ← REST API (Huma v2) — CRUD for pipelines
+│       ├── ingestor/                    ← Kafka consumer → NATS publisher
+│       │   └── processor.go            ← core batching + publish logic
+│       ├── stream/                      ← thin NATS JetStream abstraction (all stages use this)
+│       ├── filter/                      ← expr-based event filtering
+│       │   ├── validate.go             ← validates filter expressions at config time
+│       │   └── json/                   ← applies filter at runtime
+│       ├── deduplication/               ← BadgerDB-backed dedup state store
+│       │   └── badger/                 ← implementation
+│       ├── transformer/                 ← stateless field transforms
+│       │   ├── evaluate.go             ← one-shot transform evaluation (used in UI preview)
+│       │   ├── json/                   ← runtime transformer (used by the dedup pod)
+│       │   └── versioned/              ← schema-version-aware transformer (used in prod)
+│       ├── join/                        ← temporal left/right stream join
+│       ├── sink/                        ← ClickHouse batch writer (clickhouse-go v2)
+│       │   └── errors/                 ← classifies CH errors as Retryable / Permanent
+│       ├── dlq/                         ← Dead-Letter Queue publisher
+│       ├── models/                      ← shared config structs (start here to understand fields)
+│       │   └── configs.go              ← PipelineConfig, KafkaTopicsConfig, Transform, etc.
+│       ├── schema_v2/                   ← JSON → ClickHouse schema mapping
+│       ├── storage/                     ← PostgreSQL persistence (pgx v5)
+│       ├── orchestrator/               ← creates/deletes Kubernetes workloads
+│       └── service/                    ← pipeline lifecycle business logic
+│
+├── ui/                                  ← Next.js frontend
+├── nats-kafka-bridge/                   ← optional NATS ↔ Kafka bridge
+├── docs/                                ← this docs site (Nextra / Next.js)
+└── demos/                               ← runnable local demos
+```
+
+**Key insight:** every stage reads from a NATS stream and writes to another NATS stream. `internal/stream/` is the abstraction that makes this uniform. The Sink is the exception — it reads from NATS and writes to ClickHouse.
+
+---
+
+## Concepts You Need to Know
+
+### NATS JetStream
+
+NATS is the internal message bus. JetStream adds persistence. Every stage subscribes to one stream and publishes to the next. Messages are only deleted from a stream after the consumer **explicitly acknowledges** them — so a crash can't lose data.
+
+### Explicit Acknowledgment
+
+When the Sink successfully writes a batch to ClickHouse, it calls `Ack()` on each NATS message. If the Sink crashes before `Ack()`, NATS will redeliver the message after a timeout. This is how GlassFlow guarantees at-least-once delivery.
+
+### expr Expression Engine
+
+Both Filter and Transform use the [`expr`](https://github.com/expr-lang/expr) library. You write expressions like `age > 18 and country == "US"`. The engine compiles and validates these at config time, then runs them against each event at runtime.
+
+### Pipeline = Config + Pods
+
+A pipeline is a JSON configuration stored in PostgreSQL. When you create one via the API, the orchestrator spins up Kubernetes pods (Ingestor, Transform, Sink) wired together via NATS streams. Delete the pipeline → pods and streams are torn down.
 
 ---
 
 ## Suggested Reading Order
 
-Follow this path to build understanding layer by layer.
+<Steps>
 
-### Step 1 — Understand the pipeline lifecycle
+### Understand the big picture (30 min)
 
-Read these two docs pages first (10 min):
+Read these two pages in the docs before touching any code:
+- [Architecture Overview](/architecture) — how components fit together in Kubernetes
+- [Data Flow](/architecture/data-flow) — the acknowledgment model at each stage
 
-- [Architecture Overview](/architecture) — component diagram
-- [Data Flow](/architecture/data-flow) — acknowledgment guarantees at each stage
+### Trace a Kafka event through the code (45 min)
 
-### Step 2 — Trace the code for a single event
+Follow a single message from Kafka to ClickHouse:
 
-Follow a Kafka message from source to ClickHouse:
+1. **`glassflow-api/cmd/main.go`** — find where `-role` dispatches to `ingestor`, `sink`, etc.
+2. **`internal/ingestor/ingestor.go`** → **`internal/ingestor/processor.go`** — Kafka consumer calls `ProcessBatch`, which publishes each record to NATS
+3. **`internal/stream/`** — the `Publisher` interface that every stage uses to talk to NATS
+4. **`internal/sink/sink.go`** — subscribes to NATS, accumulates a batch, calls ClickHouse
 
-1. `glassflow-api/cmd/main.go` — see how `-role` dispatches to each component
-2. `internal/ingestor/` — Kafka consumer polls, publishes to NATS
-3. `internal/stream/` — NATS subscriber abstraction used by every downstream stage
-4. `internal/sink/` — reads from NATS, batches, writes to ClickHouse
+This path uses every core abstraction without the optional complexity of dedup/join.
 
-This end-to-end path uses every core abstraction without the optional complexity of dedup/join.
+### Explore optional stages (30 min each)
 
-### Step 3 — Explore optional transformation stages
+Once the core path is clear, read these packages in order:
 
-Once the core path is clear:
+| Package | What it does | Good file to start with |
+|---------|-------------|------------------------|
+| `internal/filter/` | Drops events that don't pass an `expr` rule | `validate.go` |
+| `internal/deduplication/badger/` | Key-value dedup with time window | `dedup.go` |
+| `internal/transformer/json/` | Field-level expression transforms | `transformation.go` |
+| `internal/join/` | Left/right temporal join with TTL | `join.go` |
 
-| Package | What it does |
-|---------|-------------|
-| `internal/filter/` | Evaluates `expr` expressions; drops non-matching events |
-| `internal/deduplication/` | BadgerDB-backed key store; skips seen events within a time window |
-| `internal/transformer/` | Applies field-level expression transforms before schema mapping |
-| `internal/join/` | Temporal left/right join with KV stores and TTL eviction |
+### Understand pipeline configuration (20 min)
 
-### Step 4 — Understand pipeline configuration
+- `internal/models/configs.go` — every config field in one place; read this to understand what each pipeline option does
+- `internal/storage/` — how configs are persisted in PostgreSQL
+- `internal/api/` — the REST endpoints the UI and CLI talk to
 
-- `internal/models/` — all config structs (start here to understand what each field does)
-- `internal/storage/` — how pipelines are persisted in PostgreSQL
-- `internal/api/` — REST endpoints that create/update/delete pipelines
-
-### Step 5 — Run something locally
+### Run something locally
 
 ```bash
 # Start a local Kind cluster with all services
 glassflow up
 
-# Or load demo data
+# Or start with demo data pre-loaded
 glassflow up --demo
 ```
 
-Then create a pipeline using a test payload:
+The API is at `http://localhost:8081`. Create a pipeline using a test payload:
 
 ```bash
 curl -v http://localhost:8081/api/v1/pipeline \
@@ -135,53 +181,231 @@ curl -v http://localhost:8081/api/v1/pipeline \
 ```
 
 <Callout type="info">
-  Test payloads live in `glassflow-api/bin/*.json`. Pick the one closest to the feature you are working on.
+  Test payloads live in `glassflow-api/bin/*.json`. Pick the one that matches the feature you're exploring.
+</Callout>
+
+</Steps>
+
+---
+
+## Practice Tasks
+
+These are hands-on exercises designed to get you comfortable with the codebase. Each one targets a real file, requires no infrastructure, and runs with a single `go test` command.
+
+<Callout type="info">
+  Run any test with: `go test ./internal/... -run TestName -race` from the `glassflow-api/` directory.
 </Callout>
 
 ---
 
-## Key Technology Choices
+### Task 1 — Add a filter expression test case
 
-| Purpose | Library | Why |
-|---------|---------|-----|
-| REST API | [Huma v2](https://huma.rocks) | OpenAPI-first, schema validation built in |
-| Kafka consumer | [franz-go](https://github.com/twmb/franz-go) | Pure Go, explicit offset control |
-| ClickHouse writer | [clickhouse-go v2](https://github.com/ClickHouse/clickhouse-go) | Native protocol, bulk insert support |
-| Messaging | [NATS JetStream](https://docs.nats.io/nats-concepts/jetstream) | Persistent, at-least-once delivery with explicit ack |
-| Expression engine | [expr](https://github.com/expr-lang/expr) | Safe, sandboxed expression evaluation |
-| Dedup state | [BadgerDB v4](https://github.com/dgraph-io/badger) | Embedded LSM store, no external dependency |
-| Pipeline config | PostgreSQL + [pgx v5](https://github.com/jackc/pgx) | Reliable config persistence |
-| Observability | OpenTelemetry + slog/tint | Structured logs + OTEL metrics/traces |
+**File:** `glassflow-api/internal/filter/validate_test.go`
+**Skill:** table-driven tests, understanding the `expr` engine
+**Estimated time:** 15 minutes
+
+The filter package validates `expr` expressions at config time. Look at the existing test at line 9 to understand the pattern, then add one new test case to the `tests` slice in `TestValidateFilter`:
+
+```go
+{
+    name: "your case here",
+    args: args{
+        expression: "...",
+        fields: []models.StreamDataField{
+            {FieldName: "...", FieldType: "..."},
+        },
+    },
+    wantErr: true, // or false
+},
+```
+
+Try these ideas (pick one or add all three):
+
+| Case to test | Expression | Fields | Should error? |
+|---|---|---|---|
+| Division by zero in expression | `score / 0 > 1` | `score int` | No — `expr` doesn't evaluate, just compiles |
+| `or` with mismatched types | `age or name` | `age int`, `name string` | Yes — non-boolean result |
+| Nested field with correct type | `address.zip == "10001"` | `address.zip string` | No |
+
+Run your test:
+
+```bash
+go test ./internal/filter/... -run TestValidateFilter -race -v
+```
 
 ---
 
-## Common Commands
+### Task 2 — Add an edge case to the ClickHouse identifier quoting tests
+
+**File:** `glassflow-api/internal/sink/quote_test.go`
+**Skill:** pure unit tests, string handling, no mocks needed
+**Estimated time:** 10 minutes
+
+The sink quotes ClickHouse column names with backticks to handle reserved words. Open the file and add edge cases to `TestQuoteIdentifier` or `TestQuoteIdentifiers`:
+
+Suggestions:
+
+| Input | Expected output |
+|---|---|
+| A name with a space: `"my column"` | `` `my column` `` |
+| Unicode: `"naïve"` | `` `naïve` `` |
+| All backticks: `` "```" `` | `` "```` ``` ````" `` |
+| A slice with a name that has backticks | `"` `` `a``b` `` `"` |
+
+Run your test:
 
 ```bash
-# Unit tests (from glassflow-api/)
+go test ./internal/sink/... -run TestQuote -race -v
+```
+
+---
+
+### Task 3 — Write a test for `ValidateFilterExpressionV2`
+
+**File:** `glassflow-api/internal/filter/validate_test.go`
+**Skill:** writing a complete test function from scratch
+**Estimated time:** 25 minutes
+
+`validate.go` exports two functions: `ValidateFilterExpression` (uses `models.StreamDataField`) and `ValidateFilterExpressionV2` (uses `models.Field`). There is only a test for the first one.
+
+Write `TestValidateFilterV2` following the same table-driven pattern as `TestValidateFilter`. Use `models.Field` instead of `models.StreamDataField`:
+
+```go
+models.Field{Name: "age", Type: "int"}
+```
+
+Cover at least these cases:
+- Empty expression → error
+- Valid boolean expression → no error
+- Expression referencing a field not in the schema → error
+- Expression that returns a non-boolean (e.g., `age + 1`) → error
+
+Run your test:
+
+```bash
+go test ./internal/filter/... -run TestValidateFilterV2 -race -v
+```
+
+<Callout type="tip">
+  Stuck? Look at `validate.go` lines 56–94 — `ValidateFilterExpressionV2` has the same logic as `ValidateFilterExpression`, just with a different field type. Copy the test structure from `TestValidateFilter` and swap `StreamDataField` for `Field`.
+</Callout>
+
+---
+
+### Task 4 — Explore error classification in the Sink
+
+**File:** `glassflow-api/internal/sink/nack_test.go` and `glassflow-api/internal/sink/errors/`
+**Skill:** reading error classification logic, adding test cases
+**Estimated time:** 20 minutes
+
+The sink classifies ClickHouse errors into three categories:
+- `Retryable` — transient errors (e.g., server overloaded) → NACK the message so NATS redelivers it
+- `Permanent` — schema errors (e.g., unknown column) → send to DLQ, don't retry
+- `Unknown` — unrecognised errors → treat as DLQ (conservative)
+
+Look at `internal/sink/errors/` and `nack_test.go` to understand what ClickHouse error codes exist.
+
+**Your task:** Find two more ClickHouse error codes that should be `Retryable` and two more that should be `Permanent`, then add test cases to `nack_test.go` using the existing `TestClassify_*` pattern:
+
+```go
+func TestClassify_MyNewCase(t *testing.T) {
+    require.Equal(t, sinkerrors.Retryable, sinkerrors.Classify(chProtoException(CODE)))
+}
+```
+
+<Callout type="tip">
+  ClickHouse error codes are documented at [clickhouse.com/docs/en/interfaces/formats](https://clickhouse.com/docs). Look in `internal/sink/errors/classify.go` for codes already handled — add ones from adjacent error categories.
+</Callout>
+
+Run your test:
+
+```bash
+go test ./internal/sink/... -run TestClassify -race -v
+```
+
+---
+
+### Task 5 — (Stretch) Write a test for the transformer `Evaluate` function
+
+**File:** `glassflow-api/internal/transformer/evaluate.go`
+**New file:** `glassflow-api/internal/transformer/evaluate_test.go`
+**Skill:** creating a test file from scratch, using `models.Transform`
+**Estimated time:** 30 minutes
+
+`Evaluate` takes a slice of transformations and a JSON payload, runs the expressions, and returns transformed JSON. It has no tests yet.
+
+Create `evaluate_test.go` in `package transformer` and write `TestEvaluate`. Cover:
+
+| Input JSON | Transform | Expected output |
+|---|---|---|
+| `{"name":"alice"}` | `upper(name)` → `NAME string` | `{"NAME":"ALICE"}` |
+| `{"price":100}` | `price * 1.2` → `price_with_tax float` | `{"price_with_tax":120}` |
+| `{"ts":""}` | invalid expression `(((`  | returns error |
+| `{"a":1,"b":2}` | two transforms: `a+b` → `sum int`, `a*b` → `product int` | `{"sum":3,"product":2}` |
+
+The function signature is:
+
+```go
+func Evaluate(ctx context.Context, transformations []models.Transform, sampleJSON []byte) ([]byte, error)
+```
+
+And `models.Transform` looks like:
+
+```go
+models.Transform{
+    Expression: "upper(name)",
+    OutputName: "NAME",
+    OutputType: "string",
+}
+```
+
+Run your test:
+
+```bash
+go test ./internal/transformer/... -run TestEvaluate -race -v
+```
+
+---
+
+## Key Technology Reference
+
+| Purpose | Library | Docs |
+|---------|---------|------|
+| REST API | Huma v2 | [huma.rocks](https://huma.rocks) |
+| Kafka consumer | franz-go | [github.com/twmb/franz-go](https://github.com/twmb/franz-go) |
+| ClickHouse writer | clickhouse-go v2 | [github.com/ClickHouse/clickhouse-go](https://github.com/ClickHouse/clickhouse-go) |
+| Messaging | NATS JetStream | [docs.nats.io](https://docs.nats.io) |
+| Expression engine | expr | [github.com/expr-lang/expr](https://github.com/expr-lang/expr) |
+| Dedup state | BadgerDB v4 | [github.com/dgraph-io/badger](https://github.com/dgraph-io/badger) |
+| Structured logs | slog + tint | stdlib |
+
+---
+
+## Development Commands
+
+```bash
+# From glassflow-api/
+
+# Run all unit tests
 make run-test
 
-# Short tests only
-make run-short-test
-
-# End-to-end tests
-make run-e2e-test
+# Run a single test by name
+go test ./internal/... -run TestFunctionName -race -v
 
 # Lint
 make lint
 
-# Full pre-push check (run before opening a PR)
+# Full pre-push check (tests + lint — run this before opening a PR)
 make pre-push-check
-
-# Single test
-go test ./internal/... -run TestFunctionName -race
 ```
 
 ---
 
 ## Where to Get Help
 
-- **Architecture questions** — read `docs/app/architecture/`
-- **Domain terminology** — `../glassflow-agent-context/domain/glossary.md`
-- **Slack** — [GlassFlow Hub](https://join.slack.com/t/glassflowhub/shared_invite/zt-349m7lenp-IFeKSGfQwpJfIiQ7oyFFKg)
-- **GitHub Issues** — [github.com/glassflow/clickhouse-etl/issues](https://github.com/glassflow/clickhouse-etl/issues)
+| Channel | Use for |
+|---------|---------|
+| Code questions | Open a [GitHub Issue](https://github.com/glassflow/clickhouse-etl/issues) |
+| Architecture questions | Read `docs/app/architecture/` in this site |
+| Community | [Slack — GlassFlow Hub](https://join.slack.com/t/glassflowhub/shared_invite/zt-349m7lenp-IFeKSGfQwpJfIiQ7oyFFKg) |
+| Domain terminology | `../glassflow-agent-context/domain/glossary.md` |
