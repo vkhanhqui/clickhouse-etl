@@ -1,0 +1,369 @@
+---
+title: 'Security Findings'
+description: 'Security audit findings for the GlassFlow codebase — vulnerabilities, risks, and recommended mitigations'
+---
+
+import { Callout } from 'nextra/components'
+
+# Security Findings
+
+This document records the results of an internal security audit of the `glassflow-api` codebase. Findings are grouped by severity and include exact file paths, code snippets, and recommended mitigations.
+
+<Callout type="warning">
+  This document is for internal engineering use. It contains details about known security weaknesses and should not be published publicly until mitigations are in place.
+</Callout>
+
+---
+
+## Summary
+
+| ID | Severity | Title | Status |
+|----|----------|-------|--------|
+| [SEC-001](#sec-001) | Critical | Credentials returned in GET pipeline API response | Open |
+| [SEC-002](#sec-002) | High | At-rest encryption silently disabled by default | Open |
+| [SEC-003](#sec-003) | High | No authentication on any REST endpoint | Open |
+| [SEC-004](#sec-004) | High | Runtime filter compiled without type-safe environment | Open |
+| [SEC-005](#sec-005) | Medium | Kerberos keytab temp files never cleaned up | Open |
+| [SEC-006](#sec-006) | Medium | No request body size limit (DoS vector) | Open |
+| [SEC-007](#sec-007) | Medium | InsecureSkipVerify user-controllable for Kafka and ClickHouse TLS | Open |
+| [SEC-008](#sec-008) | Low | `/internal/` endpoint on same listener as public API | Open |
+| [SEC-009](#sec-009) | Low | Base64 pseudo-encryption for legacy passwords | Open |
+
+---
+
+## Critical
+
+### SEC-001 — Credentials returned in GET pipeline API response {#sec-001}
+
+**File:** `glassflow-api/internal/api/pipeline_from_model.go`
+**Lines:** 157–173 (ClickHouse), 254–271 (Kafka), 45–47 (Schema Registry)
+
+**Description:**
+`GET /api/v1/pipeline/{id}` converts the stored pipeline config to a JSON response via `buildSink()`, `kafkaConnectionParamsFromModel()`, and `buildSources()`. All credential fields are copied verbatim into the response — no masking, no redaction.
+
+The following secrets are exposed to any caller:
+
+| Field | JSON key | Source |
+|-------|----------|--------|
+| ClickHouse password | `password` | `pipeline_from_model.go:165` |
+| Kafka SASL password | `password` | `pipeline_from_model.go:261` |
+| Kafka TLS private key | `client_key` | `pipeline_from_model.go:264` |
+| Kafka Kerberos keytab | `kerberos_keytab` | `pipeline_from_model.go:268` |
+| Schema Registry API key | `api_key` | `pipeline_from_model.go:47` (via `models.SchemaRegistryConfig`) |
+| Schema Registry API secret | `api_secret` | `pipeline_from_model.go:47` |
+
+```go
+// pipeline_from_model.go:157-173 — ClickHouse password in GET response
+return sink{
+    Type: internal.ClickHouseSinkType,
+    ConnectionParams: clickhouseConnectionParams{
+        Host:     p.Sink.ClickHouseConnectionParams.Host,
+        Username: p.Sink.ClickHouseConnectionParams.Username,
+        Password: p.Sink.ClickHouseConnectionParams.Password, // ← returned as-is
+        ...
+    },
+}
+
+// pipeline_from_model.go:254-271 — Kafka SASL password + TLS key in GET response
+return kafkaConnectionParams{
+    SASLPassword: conn.SASLPassword,   // ← returned as-is
+    TLSKey:       conn.TLSKey,         // ← private key returned as-is
+    KerberosKeytab: conn.KerberosKeytab, // ← keytab returned as-is
+    ...
+}
+```
+
+**Impact:** Any process with network access to the API can retrieve every credential stored in every pipeline. In a self-hosted deployment without a network boundary, this means any pod in the cluster can exfiltrate all Kafka and ClickHouse credentials via a simple HTTP GET.
+
+**Mitigation:**
+Return masked values (e.g., `"***"`) for all credential fields in GET responses. The UI only needs to know whether a password is set, not its value. Apply this in `buildSink()`, `kafkaConnectionParamsFromModel()`, and `buildSources()`:
+
+```go
+// Replace:
+Password: conn.SASLPassword,
+// With:
+Password: maskSecret(conn.SASLPassword),
+
+func maskSecret(s string) string {
+    if s == "" {
+        return ""
+    }
+    return "***"
+}
+```
+
+Do the same for `TLSKey`, `TLSCert`, `TLSRoot`, `KerberosKeytab`, `APIKey`, `APISecret`.
+
+---
+
+## High
+
+### SEC-002 — At-rest encryption silently disabled by default {#sec-002}
+
+**File:** `glassflow-api/cmd/glassflow/utils.go:9-47`
+
+**Description:**
+Credential encryption at rest is controlled by the `ENCRYPTION_KEY` env var or `ENCRYPTION_KEY_PATH`. If neither is set (the default configuration), the system silently stores all credentials — Kafka SASL passwords, ClickHouse passwords, TLS private keys, Kerberos keytabs — in plaintext in PostgreSQL.
+
+```go
+// utils.go:22-25 — silently falls through to no encryption
+if os.IsNotExist(err) {
+    log.Info("encryption key file not found, encryption disabled",
+        slog.String("path", cfg.EncryptionKeyPath))
+    return nil, nil  // ← nil means no encryption service is created
+}
+```
+
+The storage layer checks `if s.encryptionService != nil` before encrypting — passing `nil` causes all fields to be stored in plaintext with no warning at write time.
+
+**Impact:** A PostgreSQL dump, backup, or database compromise exposes every credential stored across all pipelines. The risk is amplified by SEC-001 (API exposes them too) and SEC-003 (no auth gate).
+
+**Mitigation:**
+- Make the encryption key **required** in production configurations, not optional. Fail startup if no key is found, rather than silently continuing without encryption.
+- Or: emit a `log.Warn` at startup and on every write when encryption is disabled, making the degraded mode visible.
+- Document the requirement prominently in the Helm chart and installation guide.
+
+---
+
+### SEC-003 — No authentication on any REST endpoint {#sec-003}
+
+**File:** `glassflow-api/internal/api/router.go:106`
+
+**Description:**
+The router applies three middlewares: `Recovery`, `RequestLogging`, and `RequestMetrics`. There is no authentication middleware. Every endpoint — including pipeline CRUD, DLQ purge, and `GET /api/v1/pipeline/{id}` (which returns plaintext credentials per SEC-001) — is accessible to any network-reachable client without credentials.
+
+```go
+// router.go:106 — the full middleware stack
+r.Use(Recovery(log), RequestLogging(log), RequestMetrics())
+// No auth middleware.
+```
+
+**Impact:** An attacker with network access to port 8081 can create, read, edit, and delete all pipelines, read all stored credentials (SEC-001), and purge Dead-Letter Queues without any authentication. In a Kubernetes cluster where pods share a network namespace, this is reachable from any compromised pod.
+
+**Mitigation:** Since GlassFlow is positioned as a self-hosted tool, network-level controls (Kubernetes NetworkPolicy, service mesh mTLS, or an ingress with auth) are the primary mitigation. However, document this explicitly in the security model:
+- Add a `NetworkPolicy` to the Helm chart that restricts inbound access to port 8081 to known sources (the UI pod and operator).
+- Consider adding an optional API key middleware for deployments that expose the API externally.
+
+---
+
+### SEC-004 — Runtime filter compiled without type-safe environment {#sec-004}
+
+**File:** `glassflow-api/internal/filter/json/filter.go:22`
+
+**Description:**
+Filter expressions are validated at config time with a typed `expr.Env(exprEnv)` that matches the declared schema fields. At runtime, the same expression is compiled without `expr.Env()`:
+
+```go
+// filter/json/filter.go:22 — runtime compile, no Env()
+compiledExpression, err = expr.Compile(expression)
+
+// filter/validate.go:38 — validation compile, with Env()
+compiledExecutor, err := expr.Compile(expression, expr.Env(exprEnv))
+```
+
+The `expr.Env()` option enables static type-checking. Without it, the compiler accepts any identifier reference, and type errors surface at runtime. This creates a gap between what the validation endpoint accepts and what the runtime will actually execute successfully — an expression can pass the `/api/v1/filter/validate` endpoint, but cause runtime failures on every event, silently sending all events to the DLQ.
+
+**Impact:** Expressions that reference wrong field names or produce non-boolean results are not caught until data flows through the pipeline, causing data loss to the DLQ rather than a clear config error.
+
+**Mitigation:**
+Pass the schema-derived environment to `expr.Compile` at runtime too. The runtime filter should deserialize the message payload into a typed map and use `expr.Env()` with the same environment used during validation:
+
+```go
+// filter/json/filter.go — use Env() at compile time
+compiledExpression, err = expr.Compile(expression, expr.Env(exprEnv))
+```
+
+The environment can be constructed from the schema fields at filter initialization time rather than per-message.
+
+---
+
+## Medium
+
+### SEC-005 — Kerberos keytab temp files never cleaned up {#sec-005}
+
+**File:** `glassflow-api/internal/kafka/consumer.go:169-174`
+**File:** `glassflow-api/internal/kafka/utils.go:9-30`
+
+**Description:**
+When the Kafka consumer uses Kerberos authentication, it writes the keytab and `krb5.conf` to temporary files via `os.CreateTemp`. The files are loaded by the Kerberos library but **never deleted** after a successful load:
+
+```go
+// consumer.go:169-174 — keytab written to disk, never deleted on success
+keytabFile, err := createTempKeytabFile(conn.KerberosKeytab)
+if err != nil {
+    return nil, fmt.Errorf("create temp keytab file: %w", err)
+}
+keytab, err := krb5keytab.Load(keytabFile)
+// ← no os.Remove(keytabFile) here
+
+// utils.go:24-26 — os.Remove only called on write failure, not on success
+if _, err := tmpFile.Write(keytabData); err != nil {
+    os.Remove(tmpFile.Name())
+    return "", fmt.Errorf("write keytab data: %w", err)
+}
+return tmpFile.Name(), nil  // ← caller never removes this
+```
+
+`os.CreateTemp` uses the default temp directory (typically world-readable on some systems before `umask` is applied). Kerberos keytabs are long-term credentials that grant the ability to impersonate a Kerberos principal — leaving them on disk is a significant risk.
+
+**Impact:** If a container is stopped without a clean filesystem cleanup, the keytab file persists. Any process with filesystem access (e.g., another container sharing the node's `/tmp`) could read it.
+
+**Mitigation:**
+
+```go
+keytabFile, err := createTempKeytabFile(conn.KerberosKeytab)
+if err != nil {
+    return nil, fmt.Errorf("create temp keytab file: %w", err)
+}
+defer os.Remove(keytabFile) // ← add this
+
+keytab, err := krb5keytab.Load(keytabFile)
+```
+
+Apply the same fix for `krb5ConfigFilePath`. Additionally, set restrictive permissions (`0600`) when creating the temp file.
+
+---
+
+### SEC-006 — No request body size limit (DoS vector) {#sec-006}
+
+**File:** `glassflow-api/internal/api/router.go`, `glassflow-api/internal/server/server.go`
+
+**Description:**
+The HTTP server configures `ReadTimeout` and `WriteTimeout`, but no `MaxHeaderBytes` or `http.MaxBytesReader` wrapping the request body. A malicious (or misconfigured) client can send an arbitrarily large JSON body to any `POST`/`PUT` endpoint, causing the API server to allocate memory for the full body before returning an error.
+
+```go
+// server.go — no MaxHeaderBytes set
+Server: &http.Server{
+    ReadTimeout:  readTimeout,
+    WriteTimeout: writeTimeout,
+    IdleTimeout:  idleTimeout,
+    // MaxHeaderBytes: not set (defaults to 1 MB for headers, but body is unlimited)
+}
+
+// router.go — no MaxBytesReader middleware
+r.Use(Recovery(log), RequestLogging(log), RequestMetrics())
+```
+
+**Impact:** A single request with a large payload (e.g., a 100 MB JSON body) can spike memory usage on the API server. With a low-concurrency flood of such requests, the server can OOM-crash.
+
+**Mitigation:**
+Add a middleware that wraps the request body with `http.MaxBytesReader`:
+
+```go
+func RequestBodyLimit(maxBytes int64) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+
+// router.go
+r.Use(Recovery(log), RequestLogging(log), RequestMetrics(), RequestBodyLimit(4<<20)) // 4 MB
+```
+
+---
+
+### SEC-007 — InsecureSkipVerify is user-controllable for Kafka and ClickHouse TLS {#sec-007}
+
+**Files:**
+- `glassflow-api/internal/kafka/consumer.go:206-208`
+- `glassflow-api/internal/client/clickhouse.go:81-83`
+
+**Description:**
+Both the Kafka and ClickHouse clients allow the caller to set `InsecureSkipVerify = true` via the pipeline configuration fields `skip_tls_verification` (Kafka) and `skip_certificate_verification` (ClickHouse). When set, the TLS handshake skips server certificate verification entirely, making the connection vulnerable to MITM attacks.
+
+```go
+// kafka/consumer.go:206-208
+if conn.SkipTLSVerification {
+    tlsCfg.InsecureSkipVerify = true
+}
+
+// client/clickhouse.go:81-83
+if c.skipCertificateCheck {
+    tlsConfig.InsecureSkipVerify = true
+}
+```
+
+**Impact:** If a user enables this option (e.g., to work around a self-signed certificate), the credentials and data sent over the connection can be intercepted by anyone with the ability to perform ARP spoofing or DNS hijacking on the network path.
+
+**Mitigation:**
+- Document clearly in the UI and API reference that this option is insecure and should never be used in production.
+- For self-signed certificates, provide a `custom_ca` / `root_ca` field instead of disabling verification entirely.
+- Consider logging a startup warning when `InsecureSkipVerify` is active:
+
+```go
+if conn.SkipTLSVerification {
+    log.WarnContext(ctx, "TLS certificate verification is DISABLED for Kafka connection — vulnerable to MITM")
+    tlsCfg.InsecureSkipVerify = true
+}
+```
+
+---
+
+## Low
+
+### SEC-008 — `/internal/` endpoint on the same listener as the public API {#sec-008}
+
+**File:** `glassflow-api/internal/api/router.go:99`
+
+**Description:**
+The `/internal/pipelines/{id}/otlp-config` endpoint is registered on the same HTTP listener (port 8081) and router as the public API. It is intended for consumption by the OTLP receiver pod, but nothing enforces this — any client that can reach port 8081 can call it.
+
+```go
+// router.go:99
+registerHumaHandler("/internal/pipelines/{id}/otlp-config", h.getOTLPConfig, ...)
+```
+
+**Impact:** The OTLP config endpoint returns pipeline metadata that a caller could use to enumerate pipeline IDs or understand the internal topology of a running deployment.
+
+**Mitigation:**
+- Serve the `/internal/` routes on a separate port (e.g., 8082) that is not exposed by the Kubernetes `Service` object.
+- Or: add a middleware that validates the caller's source IP or a pre-shared token for paths matching `/internal/*`.
+
+---
+
+### SEC-009 — Base64 pseudo-encryption for legacy passwords {#sec-009}
+
+**File:** `glassflow-api/internal/api/migrate_preview.go:264-273`
+
+**Description:**
+The migration preview endpoint decodes ClickHouse passwords that were stored base64-encoded in v2 pipeline configs. A code comment acknowledges this:
+
+```go
+// decodeBase64Password decodes a base64-encoded password back to plaintext.
+// v2 pipelines stored the ClickHouse password base64-encoded in the JSON;
+// v3 expects plaintext (the storage layer handles encryption).
+func decodeBase64Password(p string) string {
+    decoded, err := base64.StdEncoding.DecodeString(p)
+    if err != nil {
+        return p // not base64 — already plaintext
+    }
+    return string(decoded)
+}
+```
+
+Base64 is encoding, not encryption. Any v2 pipeline config stored in a backup, log, or git history has its ClickHouse password recoverable by anyone who can base64-decode the string.
+
+**Impact:** Low for current deployments (v2 configs are migrated to v3 with proper encryption), but any v2 backups, exports, or migration test data retain this weakness.
+
+**Mitigation:**
+- Treat this as a known historical issue and document it in migration notes.
+- When importing v2 configs, log a warning that the original v2 config stored credentials with base64 encoding (no real protection) and that users should rotate their ClickHouse passwords after migrating.
+
+---
+
+## What Was Not Found
+
+The following attack vectors were explicitly checked and **no issues were found**:
+
+| Vector | Finding |
+|--------|---------|
+| SQL injection | All PostgreSQL queries use parameterized placeholders (`$1`, `$2`...) via pgx — no string concatenation |
+| ClickHouse injection | `INSERT` queries use `quoteIdentifier()` for table/column names and `PrepareBatch` for data |
+| Command injection | No `exec.Command` or `os/exec` usage anywhere in production code |
+| Path traversal | No user-controlled file paths; all file I/O uses hardcoded config paths or `os.CreateTemp` |
+| SSRF | The one internal HTTP call (`otlp-receiver/fetcher.go`) uses a `baseURL` set at startup from env config, not from request input |
+| Race conditions | Shared state in the ingestor processor (`activeBackpressure`) is accessed only from a single goroutine per processor instance |
+| Dependency confusion | Module path uses a private internal hostname — no risk of public package shadowing |

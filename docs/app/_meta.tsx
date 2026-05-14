@@ -6,6 +6,7 @@ export default {
     'usage-guide': '',
     'configuration': '',
     'architecture': '',
+    'security': 'Security',
     'release-notes': '',
     'faq': '',
     'support': '',
