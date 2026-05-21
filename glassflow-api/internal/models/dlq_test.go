@@ -30,16 +30,16 @@ func TestDLQNewBatchGreaterThanMaxAllowedFail(t *testing.T) {
 
 func TestNewDLQMessage(t *testing.T) {
 	data := []byte("test message")
-	dlqMsg := NewDLQMessage("test-component", "test error", data)
+	dlqMsg := NewDLQMessage(ComponentKind("test-component"), "test error", data)
 
-	require.Equal(t, "test-component", dlqMsg.Component)
+	require.Equal(t, ComponentKind("test-component"), dlqMsg.Component)
 	require.Equal(t, "test error", dlqMsg.Error)
 	require.Equal(t, Payload(data), dlqMsg.OriginalMessage)
 }
 
 func TestDLQMessageToJSON(t *testing.T) {
 	data := []byte("test message")
-	dlqMsg := NewDLQMessage("test-component", "test error", data)
+	dlqMsg := NewDLQMessage(ComponentKind("test-component"), "test error", data)
 
 	jsonData, err := dlqMsg.ToJSON()
 	require.NoError(t, err)

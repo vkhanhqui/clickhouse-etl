@@ -10,7 +10,7 @@ import (
 
 // DLQMiddleware returns a middleware that wraps a processor and writes failed messages to DLQ.
 // reason must be one of the observability.DLQReason* constants.
-func DLQMiddleware(dlqWriter batch.BatchWriter, role, reason string) func(Processor) Processor {
+func DLQMiddleware(dlqWriter batch.BatchWriter, role models.ComponentKind, reason string) func(Processor) Processor {
 	return func(next Processor) Processor {
 		return &dlqMiddleware{
 			next:      next,
@@ -24,7 +24,7 @@ func DLQMiddleware(dlqWriter batch.BatchWriter, role, reason string) func(Proces
 type dlqMiddleware struct {
 	next      Processor
 	dlqWriter batch.BatchWriter
-	role      string
+	role      models.ComponentKind
 	reason    string
 }
 
@@ -60,7 +60,7 @@ func (d *dlqMiddleware) ProcessBatch(ctx context.Context, batch ProcessorBatch) 
 			return result
 		}
 
-		observability.RecordDLQWrite(ctx, d.role, d.reason, int64(len(result.FailedMessages)))
+		observability.RecordDLQWrite(ctx, string(d.role), d.reason, int64(len(result.FailedMessages)))
 
 		result.FailedMessages = nil
 	}

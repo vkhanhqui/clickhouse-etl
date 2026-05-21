@@ -102,7 +102,7 @@ func TestDLQMessageUnmarshaling(t *testing.T) {
 			name:     "valid DLQ message",
 			jsonData: `{"component":"test-component","error":"test error","original_message":"test message"}`,
 			expected: models.DLQMessage{
-				Component:       "test-component",
+				Component:       models.ComponentKind("test-component"),
 				Error:           "test error",
 				OriginalMessage: models.NewOriginalMessage([]byte("test message")),
 			},
@@ -112,7 +112,7 @@ func TestDLQMessageUnmarshaling(t *testing.T) {
 			name:     "DLQ message with empty fields",
 			jsonData: `{"component":"","error":"","original_message":""}`,
 			expected: models.DLQMessage{
-				Component:       "",
+				Component:       models.ComponentKind(""),
 				Error:           "",
 				OriginalMessage: models.NewOriginalMessage([]byte("")),
 			},
@@ -449,17 +449,17 @@ func TestClient_FetchDLQMessages(t *testing.T) {
 
 					// Create DLQ messages
 					dlqMsg1 := models.DLQMessage{
-						Component:       "component1",
+						Component:       models.ComponentKind("component1"),
 						Error:           "error1",
 						OriginalMessage: models.NewOriginalMessage([]byte("data1")),
 					}
 					dlqMsg2 := models.DLQMessage{
-						Component:       "component2",
+						Component:       models.ComponentKind("component2"),
 						Error:           "error2",
 						OriginalMessage: models.NewOriginalMessage([]byte("data2")),
 					}
 					dlqMsg3 := models.DLQMessage{
-						Component:       "component3",
+						Component:       models.ComponentKind("component3"),
 						Error:           "error3",
 						OriginalMessage: models.NewOriginalMessage([]byte("data3")),
 					}
@@ -475,13 +475,13 @@ func TestClient_FetchDLQMessages(t *testing.T) {
 			},
 			want: func(t *testing.T, messages []models.DLQMessage) {
 				assert.Len(t, messages, 3)
-				assert.Equal(t, "component1", messages[0].Component)
+				assert.Equal(t, models.ComponentKind("component1"), messages[0].Component)
 				assert.Equal(t, "error1", messages[0].Error)
 				assert.Equal(t, models.NewOriginalMessage([]byte("data1")), messages[0].OriginalMessage)
-				assert.Equal(t, "component2", messages[1].Component)
+				assert.Equal(t, models.ComponentKind("component2"), messages[1].Component)
 				assert.Equal(t, "error2", messages[1].Error)
 				assert.Equal(t, models.NewOriginalMessage([]byte("data2")), messages[1].OriginalMessage)
-				assert.Equal(t, "component3", messages[2].Component)
+				assert.Equal(t, models.ComponentKind("component3"), messages[2].Component)
 				assert.Equal(t, "error3", messages[2].Error)
 				assert.Equal(t, models.NewOriginalMessage([]byte("data3")), messages[2].OriginalMessage)
 			},
@@ -504,7 +504,7 @@ func TestClient_FetchDLQMessages(t *testing.T) {
 					// Publish 5 messages but only fetch 2
 					for i := 0; i < 5; i++ {
 						dlqMsg := models.DLQMessage{
-							Component:       fmt.Sprintf("component%d", i),
+							Component:       models.ComponentKind(fmt.Sprintf("component%d", i)),
 							Error:           fmt.Sprintf("error%d", i),
 							OriginalMessage: models.NewOriginalMessage([]byte(fmt.Sprintf("data%d", i))),
 						}
@@ -517,8 +517,8 @@ func TestClient_FetchDLQMessages(t *testing.T) {
 			},
 			want: func(t *testing.T, messages []models.DLQMessage) {
 				assert.Len(t, messages, 2)
-				assert.Equal(t, "component0", messages[0].Component)
-				assert.Equal(t, "component1", messages[1].Component)
+				assert.Equal(t, models.ComponentKind("component0"), messages[0].Component)
+				assert.Equal(t, models.ComponentKind("component1"), messages[1].Component)
 			},
 			wantErr: assert.NoError,
 		},
@@ -575,7 +575,7 @@ func TestClient_FetchDLQMessages(t *testing.T) {
 
 					// Publish one message
 					dlqMsg := models.DLQMessage{
-						Component:       "single-component",
+						Component:       models.ComponentKind("single-component"),
 						Error:           "single-error",
 						OriginalMessage: models.NewOriginalMessage([]byte("single-data")),
 					}
@@ -587,7 +587,7 @@ func TestClient_FetchDLQMessages(t *testing.T) {
 			},
 			want: func(t *testing.T, messages []models.DLQMessage) {
 				assert.Len(t, messages, 1)
-				assert.Equal(t, "single-component", messages[0].Component)
+				assert.Equal(t, models.ComponentKind("single-component"), messages[0].Component)
 				assert.Equal(t, "single-error", messages[0].Error)
 				assert.Equal(t, models.NewOriginalMessage([]byte("single-data")), messages[0].OriginalMessage)
 			},

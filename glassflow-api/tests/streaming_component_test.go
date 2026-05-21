@@ -64,7 +64,7 @@ func createStreamingComponent(
 		dlqWriter = batchNats.NewBatchWriter(js, dlqSubjectRouter, 0)
 	}
 
-	role := internal.RoleDeduplicator
+	role := models.ComponentKindDedup
 
 	// Build dedup processor
 	var dedupProcessor processor.Processor

@@ -81,7 +81,7 @@ func (h *handler) consumeDLQ(ctx context.Context, input *ConsumeDLQInput) (*Cons
 	dlqMsgsRes := make([]DLQConsumeMessage, 0, len(msgs))
 	for _, msg := range msgs {
 		dlqMsgsRes = append(dlqMsgsRes, DLQConsumeMessage{
-			Component:       msg.Component,
+			Component:       string(msg.Component),
 			Error:           msg.Error,
 			OriginalMessage: msg.OriginalMessage.String(),
 		})

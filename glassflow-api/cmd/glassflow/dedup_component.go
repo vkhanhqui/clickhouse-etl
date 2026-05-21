@@ -175,7 +175,7 @@ func NewDedupComponent(
 	cfg *config,
 	componentSignalPublisher *componentsignals.ComponentSignalPublisher,
 ) (*processor.StreamingComponent, error) {
-	role := internal.RoleDeduplicator
+	role := models.ComponentKindDedup
 
 	dedupProcessor, err := dedupProcessorFromConfig(pipelineConfig, cfg)
 	if err != nil {

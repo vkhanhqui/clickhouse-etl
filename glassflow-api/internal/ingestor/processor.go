@@ -111,7 +111,7 @@ func NewKafkaMsgProcessor(
 func (k *KafkaMsgProcessor) pushMsgToDLQ(ctx context.Context, orgMsg []byte, err error, reason string) error {
 	k.log.Error("Pushing message to DLQ", slog.Any("error", err), slog.String("topic", k.topic.Name))
 
-	data, err := models.NewDLQMessage(internal.RoleIngestor, err.Error(), orgMsg).ToJSON()
+	data, err := models.NewDLQMessage(models.ComponentKindIngestor, err.Error(), orgMsg).ToJSON()
 	if err != nil {
 		k.log.Error("Failed to convert DLQ message to JSON", slog.Any("error", err), slog.String("topic", k.topic.Name))
 		return fmt.Errorf("failed to convert DLQ message to JSON: %w", err)
@@ -186,7 +186,7 @@ func (k *KafkaMsgProcessor) prepareMesssage(ctx context.Context, msg *kgo.Record
 				slog.String("error", err.Error()))
 
 			sigErr := k.signalPublisher.SendSignal(ctx, models.ComponentSignal{
-				Component:  internal.RoleIngestor,
+				Component:  models.ComponentKindIngestor,
 				PipelineID: k.pipelineID,
 				Reason:     err.Error(),
 				Text:       fmt.Sprintf("schema id %s validation failed", version),

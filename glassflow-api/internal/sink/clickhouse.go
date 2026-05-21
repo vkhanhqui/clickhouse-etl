@@ -736,7 +736,7 @@ func (ch *ClickHouseSink) Stop(noWait bool) {
 }
 
 func (ch *ClickHouseSink) pushMsgToDLQ(ctx context.Context, orgMsg []byte, err error, reason string) error {
-	data, err := models.NewDLQMessage(internal.RoleSink, err.Error(), orgMsg).ToJSON()
+	data, err := models.NewDLQMessage(models.ComponentKindSink, err.Error(), orgMsg).ToJSON()
 	if err != nil {
 		return fmt.Errorf("convert DLQ message to JSON: %w", err)
 	}

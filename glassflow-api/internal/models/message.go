@@ -215,7 +215,7 @@ type FailedMessage struct {
 	Error   error
 }
 
-func FailedMessageToMessage(failedMessage FailedMessage, role string, err error) (Message, error) {
+func FailedMessageToMessage(failedMessage FailedMessage, role ComponentKind, err error) (Message, error) {
 	dlqMessage, dlqErr := NewDLQMessage(
 		role,
 		err.Error(),

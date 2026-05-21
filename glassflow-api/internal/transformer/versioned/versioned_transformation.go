@@ -80,7 +80,7 @@ func (t *Transformer) Transform(ctx context.Context, inputMessage models.Message
 
 		if errors.Is(err, models.ErrCompileTransformation) {
 			signalErr := t.componentSignal.SendSignal(ctx, models.ComponentSignal{
-				Component:  internal.RoleDeduplicator,
+				Component:  models.ComponentKindDedup,
 				PipelineID: t.pipelineID,
 				Reason:     err.Error(),
 				Text:       fmt.Sprintf("failed to get new transformation version: %s", sourceSchemaVersionID),

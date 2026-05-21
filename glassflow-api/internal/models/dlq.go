@@ -21,12 +21,12 @@ func GetDLQStreamSubjectName(pipelineID string) string {
 }
 
 type DLQMessage struct {
-	Component       string  `json:"component"` // TODO: make it component kind enum
-	Error           string  `json:"error"`
-	OriginalMessage Payload `json:"original_message"`
+	Component       ComponentKind `json:"component"`
+	Error           string        `json:"error"`
+	OriginalMessage Payload       `json:"original_message"`
 }
 
-func NewDLQMessage(component, err string, data []byte) DLQMessage {
+func NewDLQMessage(component ComponentKind, err string, data []byte) DLQMessage {
 	return DLQMessage{
 		Component:       component,
 		Error:           err,

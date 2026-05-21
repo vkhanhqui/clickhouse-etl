@@ -102,7 +102,7 @@ func (w *NatsAsyncBatchWriter) pushMsgToDLQ(ctx context.Context, orgMsg []byte, 
 
 	w.log.Error("Pushing message to DLQ", slog.Any("error", err))
 
-	data, err := models.NewDLQMessage("batch-writer", err.Error(), orgMsg).ToJSON()
+	data, err := models.NewDLQMessage(models.ComponentKindBatchWriter, err.Error(), orgMsg).ToJSON()
 	if err != nil {
 		return fmt.Errorf("failed to convert DLQ message to JSON: %w", err)
 	}

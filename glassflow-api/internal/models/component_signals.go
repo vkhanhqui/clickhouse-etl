@@ -11,10 +11,10 @@ const (
 )
 
 type ComponentSignal struct {
-	PipelineID string `json:"pipeline_id"`
-	Reason     string `json:"reason"`
-	Text       string `json:"text"`
-	Component  string `json:"component"`
+	PipelineID string        `json:"pipeline_id"`
+	Reason     string        `json:"reason"`
+	Text       string        `json:"text"`
+	Component  ComponentKind `json:"component"`
 }
 
 func (m ComponentSignal) ToJSON() ([]byte, error) {

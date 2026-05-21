@@ -30,7 +30,7 @@ type StreamingComponent struct {
 	log        *slog.Logger
 	processors []Processor
 	shutdown   shutdown
-	role       string
+	role       models.ComponentKind
 
 	streaming streamingState
 }
@@ -40,7 +40,7 @@ func NewStreamingComponent(
 	writer batch.BatchWriter,
 	dlqWriter batch.BatchWriter,
 	log *slog.Logger,
-	role string,
+	role models.ComponentKind,
 	processors []Processor,
 ) *StreamingComponent {
 	return &StreamingComponent{
