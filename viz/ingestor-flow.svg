@@ -1,29 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ingestor — File Structure &amp; Data Flow</title>
-<style>
-  body {
-    margin: 0;
-    padding: 16px;
-    background: #f1f5f9;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    min-height: 100vh;
-  }
-  svg {
-    max-width: 100%;
-    height: auto;
-    box-shadow: 0 1px 3px rgba(0,0,0,.12);
-    border-radius: 8px;
-  }
-</style>
-</head>
-<body>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 1060" font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 1060" font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace" font-size="13">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
       <path d="M0,1 L9,5 L0,9" fill="#888"/>
@@ -46,150 +21,16 @@
       <stop offset="100%" stop-color="#f1f5f9"/>
     </linearGradient>
 
-    <linearGradient id="card-grad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#fafafa"/>
-    </linearGradient>
+
   </defs>
 
-  <rect width="1100" height="1060" fill="url(#bg)" rx="8"/>
+  <rect width="680" height="1060" fill="url(#bg)" rx="8"/>
 
   <!-- Title -->
-  <text x="550" y="32" text-anchor="middle" font-size="18" font-weight="bold" fill="#1e293b">ingestor — File Structure &amp; Data Flow</text>
-  <text x="550" y="50" text-anchor="middle" font-size="11" fill="#64748b">Kafka → franz-go → Processor → NATS JetStream</text>
+  <text x="340" y="32" text-anchor="middle" font-size="18" font-weight="bold" fill="#1e293b">ingestor — Data Flow</text>
+  <text x="340" y="50" text-anchor="middle" font-size="11" fill="#64748b">Kafka → franz-go → Processor → NATS JetStream</text>
 
-  <!-- ============================================================ -->
-  <!-- FOLDER TREE (left column) -->
-  <!-- ============================================================ -->
-
-  <rect x="18" y="68" width="420" height="978" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="36" y="92" font-size="12" font-weight="bold" fill="#475569">glassflow-api/internal/</text>
-  <line x1="20" y1="100" x2="436" y2="100" stroke="#e2e8f0" stroke-width="1"/>
-
-  <!-- Ingestor package -->
-  <text x="40" y="122" font-size="13" font-weight="bold" fill="#3b82f6">ingestor/</text>
-
-  <text x="56" y="143" font-size="12" fill="#334155">processor.go</text>
-  <text x="260" y="143" font-size="10" fill="#64748b">KafkaMsgProcessor.ProcessBatch</text>
-
-  <text x="56" y="162" font-size="12" fill="#334155">kafka.go</text>
-  <text x="260" y="162" font-size="10" fill="#64748b">KafkaIngestor wiring</text>
-
-  <text x="56" y="181" font-size="12" fill="#334155">processor_test.go</text>
-  <text x="260" y="181" font-size="10" fill="#64748b">9 async/sync/backpressure tests</text>
-
-  <!-- Kafka package -->
-  <text x="40" y="211" font-size="13" font-weight="bold" fill="#8b5cf6">kafka/</text>
-
-  <text x="56" y="232" font-size="12" fill="#334155">consumer.go</text>
-  <text x="260" y="232" font-size="10" fill="#64748b">consumeLoop, handleBatchMessages</text>
-
-  <!-- Stream package -->
-  <text x="40" y="262" font-size="13" font-weight="bold" fill="#059669">stream/</text>
-
-  <text x="56" y="283" font-size="12" fill="#334155">publisher.go</text>
-  <text x="260" y="283" font-size="10" fill="#64748b">NatsPublisher.PublishNatsMsgAsync</text>
-
-  <text x="56" y="302" font-size="12" fill="#334155">errors.go</text>
-  <text x="260" y="302" font-size="10" fill="#64748b">IsBackpressureErr, IsFatalPublishErr</text>
-
-  <!-- Component package -->
-  <text x="40" y="332" font-size="13" font-weight="bold" fill="#d97706">component/</text>
-
-  <text x="56" y="353" font-size="12" fill="#334155">ingestor.go</text>
-  <text x="260" y="353" font-size="10" fill="#64748b">IngestorComponent (Component iface)</text>
-
-  <text x="56" y="372" font-size="12" fill="#334155">component.go</text>
-  <text x="260" y="372" font-size="10" fill="#64748b">Start/Stop/Done interface</text>
-
-  <!-- Service package -->
-  <text x="40" y="402" font-size="13" font-weight="bold" fill="#dc2626">service/</text>
-
-  <text x="56" y="423" font-size="12" fill="#334155">ingestor_runner.go</text>
-  <text x="260" y="423" font-size="10" fill="#64748b">IngestorRunner lifecycle</text>
-
-  <!-- Processor package -->
-  <text x="40" y="453" font-size="13" font-weight="bold" fill="#0ea5e9">processor/</text>
-
-  <text x="56" y="474" font-size="12" fill="#334155">streaming_component.go</text>
-  <text x="260" y="474" font-size="10" fill="#64748b">writeWithBackpressure (pattern ref)</text>
-
-  <!-- Models package -->
-  <text x="40" y="504" font-size="13" font-weight="bold" fill="#0891b2">models/</text>
-
-  <text x="56" y="525" font-size="12" fill="#334155">configs.go</text>
-  <text x="260" y="525" font-size="10" fill="#64748b">GetIngestorStreamName, subjects</text>
-
-  <text x="56" y="544" font-size="12" fill="#334155">dlq.go</text>
-  <text x="260" y="544" font-size="10" fill="#64748b">DLQMessage, GetDLQStreamSubjectName</text>
-
-  <text x="56" y="563" font-size="12" fill="#334155">runtime_configs.go</text>
-  <text x="260" y="563" font-size="10" fill="#64748b">IngestorRuntimeConfig struct</text>
-
-  <text x="56" y="582" font-size="12" fill="#334155">errors.go</text>
-  <text x="260" y="582" font-size="10" fill="#64748b">schema error sentinels, IsIncompatibleSchemaError</text>
-
-  <!-- Schema v2 package -->
-  <text x="40" y="612" font-size="13" font-weight="bold" fill="#84cc16">schema_v2/</text>
-
-  <text x="56" y="633" font-size="12" fill="#334155">schema.go</text>
-  <text x="260" y="633" font-size="10" fill="#64748b">Schema.Validate (dispatch internal/external)</text>
-
-  <text x="56" y="652" font-size="12" fill="#334155">validate.go</text>
-  <text x="260" y="652" font-size="10" fill="#64748b">jsonValidator.validate, validateSchemaToSchema</text>
-
-  <text x="56" y="671" font-size="12" fill="#334155">store.go</text>
-  <text x="260" y="671" font-size="10" fill="#64748b">caching SchemaStore (PG backed)</text>
-
-  <!-- Schema Registry package -->
-  <text x="40" y="701" font-size="13" font-weight="bold" fill="#ec4899">schema_registry/</text>
-
-  <text x="56" y="722" font-size="12" fill="#334155">schema_registry.go</text>
-  <text x="260" y="722" font-size="10" fill="#64748b">SchemaRegistryClient.GetSchema</text>
-
-  <!-- Observability -->
-  <text x="40" y="752" font-size="13" font-weight="bold" fill="#f97316">observability/</text>
-
-  <text x="56" y="773" font-size="12" fill="#334155">meter.go</text>
-  <text x="260" y="773" font-size="10" fill="#64748b">backpressure metrics (gauge/counter/hist)</text>
-
-  <!-- cmd/glassflow -->
-  <text x="40" y="803" font-size="13" font-weight="bold" fill="#6366f1">cmd/glassflow/</text>
-
-  <text x="56" y="824" font-size="12" fill="#334155">main.go</text>
-  <text x="260" y="824" font-size="10" fill="#64748b">mainIngestor(), env wiring</text>
-
-  <!-- Legend -->
-  <line x1="40" y1="856" x2="400" y2="856" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="40" y="880" font-size="11" font-weight="bold" fill="#64748b">Legend</text>
-  <line x1="40" y1="898" x2="68" y2="898" stroke="#8b5cf6" stroke-width="2"/>
-  <text x="76" y="902" font-size="11" fill="#475569">Ingestor package</text>
-  <line x1="200" y1="898" x2="228" y2="898" stroke="#3b82f6" stroke-width="2"/>
-  <text x="236" y="902" font-size="11" fill="#475569">Kafka consumer</text>
-
-  <line x1="40" y1="918" x2="68" y2="918" stroke="#059669" stroke-width="2"/>
-  <text x="76" y="922" font-size="11" fill="#475569">NATS stream</text>
-  <line x1="200" y1="918" x2="228" y2="918" stroke="#d97706" stroke-width="2"/>
-  <text x="236" y="922" font-size="11" fill="#475569">Component</text>
-
-  <line x1="40" y1="938" x2="68" y2="938" stroke="#dc2626" stroke-width="2"/>
-  <text x="76" y="942" font-size="11" fill="#475569">Runner</text>
-  <line x1="200" y1="938" x2="228" y2="938" stroke="#0ea5e9" stroke-width="2"/>
-  <text x="236" y="942" font-size="11" fill="#475569">Processor pattern</text>
-
-  <line x1="40" y1="958" x2="68" y2="958" stroke="#84cc16" stroke-width="2"/>
-  <text x="76" y="962" font-size="11" fill="#475569">Schema v2</text>
-  <line x1="200" y1="958" x2="228" y2="958" stroke="#ec4899" stroke-width="2"/>
-  <text x="236" y="962" font-size="11" fill="#475569">Schema Registry</text>
-
-  <rect x="40" y="976" width="376" height="60" rx="4" fill="#fef2f2" stroke="#fecaca" stroke-width="1"/>
-  <text x="52" y="994" font-size="11" font-weight="bold" fill="#dc2626">Key principle</text>
-  <text x="52" y="1011" font-size="10" fill="#b91c1c">Backpressure records are NOT DLQ'd on ctx cancel</text>
-  <text x="52" y="1026" font-size="10" fill="#b91c1c">DLQ only on fatal error</text>
-
-  <!-- ============================================================ -->
-  <!-- DATA FLOW DIAGRAM (right side) -->
-  <!-- ============================================================ -->
+<g transform="translate(-420, 0)">
 
   <!-- External: Kafka -->
   <rect x="468" y="74" width="200" height="48" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
@@ -348,6 +189,5 @@
   <path d="M 963 728 L 963 790 L 646 790 L 646 870" fill="none" stroke="#ef4444" stroke-width="1" stroke-dasharray="5,3" marker-end="url(#arrow-red)"/>
   <text x="975" y="780" font-size="9" fill="#b91c1c">fatal → batch fails</text>
 
+</g>
 </svg>
-</body>
-</html>
