@@ -288,7 +288,7 @@ func (k *KafkaMsgProcessor) ProcessBatch(ctx context.Context, batch []*kgo.Recor
 	var lastProcessed *kgo.Record
 	var err error
 
-	if internal.DefaultProcessorMode == internal.SyncMode {
+	if internal.DefaultProcessorMode == internal.SyncMode { // deadcode
 		lastProcessed, err = k.processBatchSync(ctx, batch)
 		if err != nil {
 			return lastProcessed, fmt.Errorf("failed to process sync batch: %w", err)
